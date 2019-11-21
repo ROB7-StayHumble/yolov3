@@ -43,14 +43,16 @@ def load_classes(path):
 
 def labels_to_class_weights(labels, nc=80):
     # Get class weights (inverse frequency) from training labels
-    ni = len(labels)  # number of images
+    if labels[0] is None:  # no labels loaded
+        return torch.Tensor()
+
     labels = np.concatenate(labels, 0)  # labels.shape = (866643, 5) for COCO
     classes = labels[:, 0].astype(np.int)  # labels = [class xywh]
     weights = np.bincount(classes, minlength=nc)  # occurences per class
 
     # Prepend gridpoint count (for uCE trianing)
-    gpi = ((320 / 32 * np.array([1, 2, 4])) ** 2 * 3).sum()  # gridpoints per image
-    weights = np.hstack([gpi * ni - weights.sum() * 9, weights * 9]) ** 0.5  # prepend gridpoints to start
+    # gpi = ((320 / 32 * np.array([1, 2, 4])) ** 2 * 3).sum()  # gridpoints per image
+    # weights = np.hstack([gpi * len(labels)  - weights.sum() * 9, weights * 9]) ** 0.5  # prepend gridpoints to start
 
     weights[weights == 0] = 1  # replace empty bins with 1
     weights = 1 / weights  # number of targets per class
@@ -440,7 +442,7 @@ def non_max_suppression(prediction, conf_thres=0.5, nms_thres=0.5):
         (x1, y1, x2, y2, object_conf, class_conf, class)
     """
 
-    min_wh = 2  # (pixels) minimum box width and height
+    min_wh, max_wh = 2, 30000  # (pixels) minimum and maximium box width and height
 
     output = [None] * len(prediction)
     for image_i, pred in enumerate(prediction):
@@ -468,7 +470,8 @@ def non_max_suppression(prediction, conf_thres=0.5, nms_thres=0.5):
         # pred[class_pred != 2, 4] = 0.0
 
         # Select only suitable predictions
-        i = (pred[:, 4] > conf_thres) & (pred[:, 2:4] > min_wh).all(1) & torch.isfinite(pred).all(1)
+        i = (pred[:, 4] > conf_thres) & (pred[:, 2:4] > min_wh).all(1) & (pred[:, 2:4] < max_wh).all(1) & \
+            torch.isfinite(pred).all(1)
         pred = pred[i]
 
         # If none are remaining => process next image
@@ -671,7 +674,7 @@ def coco_single_class_labels(path='../coco/labels/train2014/', label_class=43):
             shutil.copyfile(src=img_file, dst='new/images/' + Path(file).name.replace('txt', 'jpg'))  # copy images
 
 
-def kmeans_targets(path='../coco/trainvalno5k.txt', n=9, img_size=512):  # from utils.utils import *; kmeans_targets()
+def kmeans_targets(path='../coco/trainvalno5k.txt', n=9, img_size=416):  # from utils.utils import *; kmeans_targets()
     # Produces a list of target kmeans suitable for use in *.cfg files
     from utils.datasets import LoadImagesAndLabels
     from scipy import cluster
@@ -681,7 +684,7 @@ def kmeans_targets(path='../coco/trainvalno5k.txt', n=9, img_size=512):  # from 
     for s, l in zip(dataset.shapes, dataset.labels):
         l[:, [1, 3]] *= s[0]  # normalized to pixels
         l[:, [2, 4]] *= s[1]
-        l[:, 1:] *= img_size / max(s) * random.uniform(0.99, 1.01)  # nominal img_size for training
+        l[:, 1:] *= img_size / max(s) * random.uniform(0.5, 1.5)  # nominal img_size for training
     wh = np.concatenate(dataset.labels, 0)[:, 3:5]  # wh from cxywh
 
     # Kmeans calculation
